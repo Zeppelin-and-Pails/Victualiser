@@ -2,40 +2,68 @@
 setup.py for z&p victualiser.
 
 """
-from distutils.core import setup
+from setuptools import setup, find_packages
+import os, io
 
-setup(
-    name = "victualiser",
-    packages = ["victualiser", "twitter", "ui"],
-    version = "0.1.1",
-    description = "Configuarble data pipeline",
-    author = "KMR",
-    author_email = "github@kerrymr.com",
-    url = "http://http://zeppelin-and-pails.com//",
-    download_url = "https://github.com/Zeppelin-and-Pails/Victualiser/archive/master.zip",
-    keywords = ["data", "feed"],
-    classifiers = [
-        "Programming Language :: Python",
-        "Programming Language :: Python :: 3",
-        "Development Status :: 2 - Pre-Alpha",
-        "Environment :: Other Environment",
-        "Intended Audience :: Developers",
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
-        "Topic :: Software Development :: Libraries :: Python Modules",
-        "Topic :: Text Processing :: Linguistic",
-        ],
-    install_requires=[
-        "luigi",
-        "pandas",
-        "numpy",
-        "textblob",
-    ],
-    long_description = """\
-Victualiser - data feeds
-----------------------------------------
-A configiurable pipeline pulling from all your favourite platforms.
+HERE = os.path.abspath(os.path.dirname(__file__))
 
-This version requires Python 3 or later;
-""",
-)
+with io.open(os.path.join(HERE, 'README.md'), 'r') as f:
+    __long_description__ = f.read()
+
+__project__      = "victualiser"
+__version__      = "0.1.1"
+__license__      = 'MIT License'
+__keywords__     = "modular data pipeline"
+__url__          = "http://zeppelin-and-pails.com/"
+__download_url__ = "https://github.com/Zeppelin-and-Pails/Victualiser/archive/master.zip"
+__platform__     = "Console"
+
+__author__       = "KMR"
+__author_email__ = "github@kerrymr.com"
+
+__classifiers__ = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Other Environment",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Linguistic",
+    "Environment :: Console",
+]
+
+__install_requires__ = [
+    "luigi",
+    "pandas",
+    "numpy",
+    "textblob",
+    "matplotlib",
+]
+
+__extra_requires__ = {
+    'test':  ['pytest', 'coverage', 'mock'],
+}
+
+def main():
+    setup(
+        name                 = __project__,
+        version              = __version__,
+        license              = __license__,
+        url                  = __url__,
+        download_url         = __download_url__,
+        keywords             = __keywords__,
+        description          = "{} - {}".format(__project__, __keywords__),
+        long_description     = __long_description__,
+        author               = __author__,
+        author_email         = __author_email__,
+        packages             = find_packages(),
+        include_package_data = True,
+        classifiers          = __classifiers__,
+        install_requires     = __install_requires__,
+        extras_require       = __extra_requires__,
+    )
+
+if __name__ == '__main__':
+    main()

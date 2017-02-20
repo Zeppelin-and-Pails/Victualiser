@@ -90,7 +90,7 @@ class Gatherer:
 
     def gather(self):
         """
-
+        gather the data from the source
         :return path: the location of all our victuals
         """
         # Build the output path and make sure the parent dirs are there
@@ -174,7 +174,6 @@ class Chef:
                     }
                 # Write out the new data
                 out_file.write("{}\n".format(json.dumps(tweet_data, sort_keys=True)))
-                print(tweet_data['source'])
 
         return self.out_path
 
@@ -202,8 +201,6 @@ class Waiter:
         # Use pandas' nice json_normalize function to flatten the structure and map the columns
         tweets_frame = pd.io.json.json_normalize(tweets, record_prefix=True)
         tweets_frame.columns = tweets_frame.columns.map(lambda x: x.split(".")[-1])
-
-        print(list(tweets_frame))
 
         # If we have a filter of items apply that and return the frame
         if isinstance(items, list):
