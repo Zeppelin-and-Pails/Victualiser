@@ -9,12 +9,12 @@ For use with victualiser, handles twitter streams.
 @author     KMR
 @licence    MIT (X11)
 """
-import re, json
-import os, yaml
+import os, sys, re
+import yaml, json
+import argparse, errno
 from datetime import datetime
 
 import pandas as pd
-import matplotlib.pyplot as pyplot
 from textblob import TextBlob
 from tweepy.streaming import StreamListener
 from tweepy import OAuthHandler
@@ -22,15 +22,10 @@ from tweepy import Stream
 from tweepy import API
 
 class TwitterStreamListener(StreamListener):
-    def __init__(self, api=None, file_path='data.json', limit=1, limit_type='count'):
+    def __init__(self, api=None, limit_type=None, limit=None):
         # Use the api provided or try a generic one
         self.api = api or API()
-        # Try to open the output file
-        try:
-            self.out = open(file_path, 'w', encoding="utf-8")
-        except Exception as e:
-            raise e
-        # Setup the other pieces needed to run nicely
+        # If we have a limit set it up
         self.limit = limit
         self.ltype = limit_type
         if self.ltype == 'count':
@@ -47,33 +42,36 @@ class TwitterStreamListener(StreamListener):
             # Check if we've hit a time limit
             if self.ltype == 'time':
                 if (datetime.now() - self.time) > self.limit:
-                    self.out.close()
                     return False
 
             # Write the data out
-            self.out.write("{}\n".format(json.dumps(status._json)))
+            print(json.dumps(status._json))
 
             # Check if we've reached a count limit
             if self.ltype == 'count':
                 self.counter += 1
                 if self.counter >= self.limit:
-                    self.out.close()
                     return False
             return True
 
+        except IOError as e:
+            if e.errno == errno.EPIPE:
+                # Broken pipe probably means the downstream consumer is gone, so just leave quietly.
+                sys.stderr.close()
+                sys.exit(0)
         except Exception as e:
             print('Failed on_status: ', str(e))
             pass
 
     def on_error(self, status):
-        # See if we're rate limited, if not just keep on going
+        # See if we're rate limited, or we have a broken pipe if not just keep on going
         if status == 420:
             return False
         print(status)
         return True
 
 class Gatherer:
-    def __init__(self, filters):
+    def __init__(self, filters=None):
         """
         Initialise a new tweet gatherer
 
@@ -93,143 +91,176 @@ class Gatherer:
         gather the data from the source
         :return path: the location of all our victuals
         """
-        # Build the output path and make sure the parent dirs are there
-        file_path = datetime.now().strftime(
-            "{}/{}".format( self.conf['data_dir'].format(self.dir),
-                            self.conf['out_file'] )
-        )
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
         # Initialise and configure the stream listener
-        sl = TwitterStreamListener(API(self.auth), file_path, self.conf['limit_count'], self.conf['limit_type'])
+        sl = TwitterStreamListener(API(self.auth), self.conf['limit_type'], self.conf['limit_count'])
         self.stream = Stream(auth=self.auth, listener=sl)
-        self.stream.filter(track=self.filters)
 
-        # Give the caller back the location of all our victuals
-        return file_path
+        # Pull in the stream using filters if we have them, or a global stream if not
+        if self.filters:
+            self.stream.filter(track=self.filters)
+        else:
+            # Semi-work around for the lack of a firehose
+            # Note: will only work for geotagged tweets
+            self.stream.filter(locations=[-180,-90,180,90])
 
 class Chef:
-    def __init__(self, in_path, out_path):
+    def __init__(self):
         """
         Initialise a new chef to enrich the data
 
         :param path: the path to a file containing raw tweets in stringified json form
         """
-        self.in_path = in_path
-        self.out_path = out_path
-
         self.source_re = re.compile('>(.+)</a>')
-
-        # Make sure the output dirs are there and try to open the file
-        os.makedirs(os.path.dirname(self.out_path), exist_ok=True)
 
     def cook(self):
         """
         Make the data delicious
         :return: path: the output path for the file with all the nice new data
         """
-        # Open the output file, if we can't somethings wrong
         try:
-            out_file = open(self.out_path, 'w', encoding="utf-8")
-        except Exception as e:
-            raise e
+            for line in sys.stdin:
+                # remove leading and trailing whitespace
+                line = line.strip()
 
-        # Open the input file and read through the lines
-        with open(self.in_path, 'r', encoding="utf-8") as f:
-            for line in f:
                 # Load the JSON and build a TextBlob for some nice text analytics
-                tweet = json.loads(line)
+                try:
+                    tweet = json.loads(line)
+                except Exception as e:
+                    # Line wasn't json, possible twitter errors, but ignore this anyway
+                    continue
+
                 blob = TextBlob(tweet['text'])
                 m = self.source_re.search(tweet['source'])
+                user_description = tweet['user']['description'].replace('\n', ' ').replace('\r', '') if tweet['user']['description'] else None
 
                 tweet_data = {
-                    'text': tweet['text'],
-                    'created_at': tweet['text'],
+                    'text': tweet['text'].replace('\n', ' ').replace('\r', ''),
+                    'created_at': tweet['created_at'],
                     'source': m.group(1),
                     'source_full': tweet['source'],
                     'retweets': tweet['retweet_count'],
                     'favorites': tweet['favorite_count'],
-                    'coordinates': tweet['coordinates'],
                     'language': tweet['lang'],
-                    'polarity': blob.sentiment.polarity,
-                    'subjectivity': blob.sentiment.subjectivity,
+                    'sentiment_polarity': blob.sentiment.polarity,
+                    'sentiment_subjectivity': blob.sentiment.subjectivity,
                     'noun_phrases': blob.noun_phrases,
-                    'user':{
-                        'location': tweet['user']['location'],
-                        'time_zone': tweet['user']['time_zone'],
-                        'user_lang': tweet['user']['lang'],
-                        'friends': tweet['user']['friends_count'],
-                        'followers': tweet['user']['followers_count'],
-                        'statuses': tweet['user']['statuses_count'],
-                        'favourites': tweet['user']['favourites_count'],
-                        'listed': tweet['user']['listed_count'],
-                        'verified': tweet['user']['lang'],
-                    }
+                    'user_name': tweet['user']['name'],
+                    'user_screen_name': tweet['user']['screen_name'],
+                    'user_description': user_description,
+                    'user_location': tweet['user']['location'],
+                    'user_time_zone': tweet['user']['time_zone'],
+                    'user_lang': tweet['user']['lang'],
+                    'user_friends': tweet['user']['friends_count'],
+                    'user_followers': tweet['user']['followers_count'],
+                    'user_statuses': tweet['user']['statuses_count'],
+                    'user_favourites': tweet['user']['favourites_count'],
+                    'user_listed': tweet['user']['listed_count'],
+                    'user_verified': tweet['user']['verified'],
+                    'user_protected': tweet['user']['protected'],
+                    'place_type': tweet['place']['place_type'] if tweet['place'] else None,
+                    'place_full_name': tweet['place']['full_name'] if tweet['place'] else None,
+                    'place_country': tweet['place']['country'] if tweet['place'] else None,
                 }
-                if tweet['place']:
-                    tweet_data['place'] = {
-                        'place_type': tweet['place']['place_type'],
-                        'full_name': tweet['place']['full_name'],
-                        'country': tweet['place']['country'],
-                    }
-                # Write out the new data
-                out_file.write("{}\n".format(json.dumps(tweet_data, sort_keys=True)))
-
-        return self.out_path
+                # output the new data
+                print("{}".format(json.dumps(tweet_data, sort_keys=True)))
+        except IOError as e:
+            if e.errno == errno.EPIPE:
+                # Broken pipe probably means the downstream consumer is done, so just leave quietly.
+                sys.stderr.close()
+                sys.exit(0)
+            sys.exit("Chef.cook() encountered: {}".format(str(e)))
 
 class Waiter:
-    def __init__(self, in_path):
+    def menu(self):
         """
-        Initialise a new waiter to serve our completed data
+        Provides a list of possible items to order
+        :return: list containg string keys available for service
+        """
+        for line in sys.stdin:
+            print(json.dumps(list(json.loads(line)), sort_keys=True))
+            sys.exit(0)
 
-        :param path: the path to a file containing cooked tweets in stringified json form
+    def serve(self, items=None, table=None):
         """
-        self.in_path = in_path
-
-    def serve(self, items=None):
-        """
-        Serve up the cooked data
-        :param items - optional: a list of items to return, if not passed will return the full dataframe
-        :return: pandas.DataFrame containing data loaded from the in_path
+        Collects cooked data from the chef and serves up the result
+        :param items: the a list of keys to produce data for
+        :param table: the output file location
         """
         tweets = []
-        # Open the input file and load the json into a list
-        with open(self.in_path, 'r', encoding="utf-8") as f:
-            for line in f:
-                tweets.append(json.loads(line))
+        # Open the input file and load the json into a DataFrame and then a list
+        for line in sys.stdin:
+            df = pd.io.json.json_normalize(json.loads(line))
+            # If we have a filter of items drop the extra bits
+            if items:
+                for c in df.columns:
+                    if c not in items:
+                        df = df.drop(c, axis=1)
+            tweets.append(df)
 
-        # Use pandas' nice json_normalize function to flatten the structure and map the columns
-        tweets_frame = pd.io.json.json_normalize(tweets, record_prefix=True)
-        tweets_frame.columns = tweets_frame.columns.map(lambda x: x.split(".")[-1])
+        # Use pandas' nice concat function to join all the frames in to one and dump everything out to a file
+        dir = os.path.dirname(os.path.realpath(__file__))
+        conf = yaml.safe_load(open('{}/twitter.cfg'.format(dir)))
+        table = table or conf['out_loc']
+        out_path = datetime.now().strftime(table.format(dir))
+        pd.concat(tweets).to_csv(out_path, sep='\t', encoding='utf-8')
 
-        # If we have a filter of items apply that and return the frame
-        if isinstance(items, list):
-            return tweets_frame.loc[:, items]
-        return tweets_frame
+
+def main():
+    # Get some args
+    description = 'Twitter stream victualiser'
+    usage = '\npython victuals.py -g -f "Victuals" "Delicious"\npython victuals.py -c' \
+            '\npython victuals.py -w -m\npython victuals.py -w -s "text" "language" "source" -t "/tmp/data/twitter_text_language_source_%Y-%m-%d"'
+    parser = argparse.ArgumentParser(
+        description=description,
+        usage=usage,
+        formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument(
+        '-g', '--gatherer', dest='gatherer', action='store_true',
+        help='Start a Gatherer collecting tweets based on filters passed with -f (--filters)'
+    )
+    parser.add_argument(
+        '-f', '--filters', dest='filters', nargs='+',
+        help='Text to filter a gatherer on e.g. "Victuals" "Delicious"\n(Note: filters are case insensitive)'
+    )
+    parser.add_argument(
+        '-c', '--chef', dest='chef', action='store_true',
+        help='Start a Chef transforming raw tweets piped in into delicious tweets'
+    )
+    parser.add_argument(
+        '-w', '--waiter', dest='waiter', action='store_true',
+        help='Start a Waiter collecting the tweets from the chef, used with either -m (--menu), or -s (--serve) and -t (--table)'
+    )
+    parser.add_argument(
+        '-m', '--menu', dest='menu', action='store_true',
+        help='Return a list of items available from the chef'
+    )
+    parser.add_argument(
+        '-s', '--serve', dest='serve', nargs='*', metavar='ITEM',
+        help='The item(s) to serve'
+    )
+    parser.add_argument(
+        '-t', '--table', dest='table', nargs='?',
+        help='The location to deliver the items to (output is an sqlite database), if no location is provided will attempt default to values in config'
+    )
+    args = parser.parse_args()
+
+    # See what we need to do
+    if args.gatherer:
+        if args.filters:
+            gatherer = Gatherer(args.filters)
+            gatherer.gather()
+    elif args.chef:
+        chef = Chef()
+        chef.cook()
+    elif args.waiter:
+        waiter = Waiter()
+        if args.menu:
+            waiter.menu()
+        waiter.serve(args.serve, args.table)
+    else:
+        parser.print_help()
+
+    sys.exit(0)
 
 if __name__ == '__main__':
-
-    gatherer = Gatherer(['delicious'])
-    larder = gatherer.gather()
-
-    chef = Chef(larder, re.sub(r"\.json$", "_processed.json", larder))
-    meals = chef.cook()
-
-    waiter = Waiter(meals)
-    meal = waiter.serve(
-        ['text','language','source','country']
-    )
-
-    #Analyzing Tweets by Language
-    print('Analyzing tweets by platform\n')
-    tweets_by_lang = meal['source'].value_counts()
-    fig, ax = pyplot.subplots()
-    ax.tick_params(axis='x', labelsize=10)
-    ax.tick_params(axis='y', labelsize=10)
-    ax.set_xlabel('Source', fontsize=15)
-    ax.set_ylabel('Number of tweets' , fontsize=15)
-    ax.set_title('Top 10 platforms', fontsize=15, fontweight='bold')
-    tweets_by_lang[:10].plot(ax=ax, kind='bar', color='red')
-    pyplot.tight_layout()
-    pyplot.show()
-
+    main()
