@@ -204,12 +204,22 @@ class Waiter:
         out_path = datetime.now().strftime(table.format(dir))
         pd.concat(tweets).to_csv(out_path, sep='\t', encoding='utf-8')
 
+    def order(self, items):
+        dish = {}
+        for line in sys.stdin:
+            rich_tweet = json.loads(line)
+            component = dish
+            for key in items[:-1]:
+                component = component.setdefault(rich_tweet[key], {})
+            component[rich_tweet[items[-1]]] = component[rich_tweet[items[-1]]] + 1 if rich_tweet[items[-1]] in component else 1
+        print("{}".format(json.dumps(dish, sort_keys=True)))
 
 def main():
     # Get some args
     description = 'Twitter stream victualiser'
     usage = '\npython victuals.py -g -f "Victuals" "Delicious"\npython victuals.py -c' \
-            '\npython victuals.py -w -m\npython victuals.py -w -s "text" "language" "source" -t "/tmp/data/twitter_text_language_source_%Y-%m-%d"'
+            '\npython victuals.py -w -m\npython victuals.py -w -o "source"\n' \
+            'python victuals.py -w -s "text" "language" "source" -t "/tmp/data/twitter_text_language_source"'
     parser = argparse.ArgumentParser(
         description=description,
         usage=usage,
@@ -235,6 +245,10 @@ def main():
         help='Return a list of items available from the chef'
     )
     parser.add_argument(
+        '-o', '--order', dest='order', nargs='+', metavar='ITEM',
+        help='The item(s) to serve, provided in order of precedence, will serve an nested json'
+    )
+    parser.add_argument(
         '-s', '--serve', dest='serve', nargs='*', metavar='ITEM',
         help='The item(s) to serve'
     )
@@ -256,7 +270,10 @@ def main():
         waiter = Waiter()
         if args.menu:
             waiter.menu()
-        waiter.serve(args.serve, args.table)
+        elif args.order:
+            waiter.order(args.order)
+        else:
+            waiter.serve(args.serve, args.table)
     else:
         parser.print_help()
 
