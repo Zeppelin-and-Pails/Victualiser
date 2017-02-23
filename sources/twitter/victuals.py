@@ -212,7 +212,7 @@ class Waiter:
             for key in items[:-1]:
                 component = component.setdefault(rich_tweet[key], {})
             component[rich_tweet[items[-1]]] = component[rich_tweet[items[-1]]] + 1 if rich_tweet[items[-1]] in component else 1
-        print("{}".format(json.dumps(dish, sort_keys=True)))
+        print("{}".format(json.dumps(dish)))
 
 def main():
     # Get some args
